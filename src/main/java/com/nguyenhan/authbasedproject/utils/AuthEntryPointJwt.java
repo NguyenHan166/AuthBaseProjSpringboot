@@ -35,16 +35,30 @@ public class AuthEntryPointJwt implements AuthenticationEntryPoint {
     public void commence(HttpServletRequest request, HttpServletResponse response, AuthenticationException authException) throws IOException, ServletException {
         logger.error("Unauthorized error: {}", authException.getMessage());
 
+        String errorCode = (String) request.getAttribute("exception");
+
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
 
-        final Map<String, Object> body = new HashMap<>();
+        Map<String, Object> body = new HashMap<>();
         body.put("status", HttpServletResponse.SC_UNAUTHORIZED);
-        body.put("error", "Unauthorized");
-        body.put("message", authException.getMessage());
         body.put("path", request.getServletPath());
 
-        final ObjectMapper mapper = new ObjectMapper();
-        mapper.writeValue(response.getOutputStream(), body);
+        switch (errorCode) {
+            case "TokenExpired" -> {
+                body.put("error", "TokenExpired");
+                body.put("message", "Access token has expired");
+            }
+            case "InvalidToken" -> {
+                body.put("error", "InvalidToken");
+                body.put("message", "Invalid JWT token");
+            }
+            default -> {
+                body.put("error", "Unauthorized");
+                body.put("message", authException.getMessage());
+            }
+        }
+
+        new ObjectMapper().writeValue(response.getOutputStream(), body);
     }
 }

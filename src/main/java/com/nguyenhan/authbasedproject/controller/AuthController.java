@@ -17,7 +17,10 @@ import com.nguyenhan.authbasedproject.service.auth.RefreshTokenService;
 import com.nguyenhan.authbasedproject.service.auth.UserDetailsImpl;
 import com.nguyenhan.authbasedproject.utils.JwtUtils;
 import jakarta.validation.Valid;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -53,6 +56,8 @@ public class AuthController {
     RefreshTokenService refreshTokenService;
     @Autowired
     private PasswordEncoder passwordEncoder;
+
+    private final Logger logger = LoggerFactory.getLogger(AuthController.class);
 
     @PostMapping("/login")
     public ResponseEntity<?> authenticateUser(@Valid @RequestBody LoginRequest loginRequest) {
@@ -127,28 +132,82 @@ public class AuthController {
         return ResponseEntity.ok(new MessageResponse("User registered successfully!"));
     }
 
-    @PostMapping("/refreshtoken")
-    public ResponseEntity<?> refreshtoken(@Valid @RequestBody TokenRefreshRequest request) {
+    @PostMapping("/refresh-token")
+    public ResponseEntity<?> refreshToken(@Valid @RequestBody TokenRefreshRequest request) {
         String requestRefreshToken = request.getRefreshToken();
 
-        return refreshTokenService.findByToken(requestRefreshToken)
-                .map(refreshTokenService::verifyExpiration)
-                .map(RefreshToken::getUser)
-                .map(user -> {
-                    String token = jwtUtils.generateTokenFromUsername(user.getUsername());
-                    return ResponseEntity.ok(new TokenRefreshResponse(token, requestRefreshToken));
-                })
-                .orElseThrow(() -> new TokenRefreshException(requestRefreshToken,
-                        "Refresh token is not in database!"));
+        try{
+            RefreshToken refreshToken = refreshTokenService.processRefreshToken(requestRefreshToken);
+
+            User user = refreshToken.getUser();
+            String newAccessToken = jwtUtils.generateTokenFromUser(user);
+            String newRefreshToken = refreshTokenService.createRefreshToken(user.getId()).getToken();
+
+            return ResponseEntity.ok(new TokenRefreshResponse(newAccessToken, refreshToken.getToken()));
+        }catch (TokenRefreshException e) {
+            logger.warn("Token refresh failed: {}", e.getMessage());
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(new MessageResponse(e.getMessage()));
+        }catch (Exception e) {
+            logger.error("Unexpected error during token refresh: {}", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(new MessageResponse("An unexpected error occurred while refreshing the token."));
+        }
     }
 
     @PostMapping("/signout")
     public ResponseEntity<?> logoutUser() {
-        UserDetailsImpl userDetails = (UserDetailsImpl) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-        Long userId = userDetails.getId();
-        refreshTokenService.deleteByUserId(userId);
-        return ResponseEntity.ok(new MessageResponse("Log out successful!"));
+        try{
+            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+            if (authentication == null || !(authentication.getPrincipal() instanceof UserDetailsImpl)) {
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(new MessageResponse("User is not authenticated."));
+            }
+            UserDetailsImpl userDetails = (UserDetailsImpl) authentication.getPrincipal();
+            Long userId = userDetails.getId();
+
+            refreshTokenService.deleteByUserId(userId);
+
+            logger.info("User logged out successfully");
+            return ResponseEntity.ok(new MessageResponse("User logged out successfully!"));
+        }catch (Exception e) {
+            logger.error("Unexpected error during logout: {}", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(new MessageResponse("An unexpected error occurred while logging out."));
+        }
     }
 
+    // Security endpoint: Revoke all tokens
+    @PostMapping("/revoke-all-tokens")
+    public ResponseEntity<?> revokeAllTokens() {
+        try {
+            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+            UserDetailsImpl userDetails = (UserDetailsImpl) authentication.getPrincipal();
+            Long userId = userDetails.getId();
+
+            refreshTokenService.deleteByUserId(userId);
+
+            logger.info("All tokens revoked for user {}", userDetails.getUsername());
+            return ResponseEntity.ok(new MessageResponse("All refresh tokens have been revoked successfully!"));
+        } catch (Exception e) {
+            logger.error("Error revoking tokens: {}", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(new MessageResponse("Error revoking tokens"));
+        }
+    }
+
+    // Validation endpoint
+    @GetMapping("/validate-refresh-token")
+    public ResponseEntity<?> validateRefreshToken(@RequestParam String refreshToken) {
+        try {
+            boolean isValid = refreshTokenService.isRefreshTokenValid(refreshToken);
+            if (isValid) {
+                return ResponseEntity.ok(new MessageResponse("Refresh token is valid"));
+            } else {
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                        .body(new MessageResponse("Refresh token is invalid or expired"));
+            }
+        } catch (Exception e) {
+            logger.error("Error validating refresh token: {}", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(new MessageResponse("Error validating refresh token"));
+        }
+    }
 
 }
