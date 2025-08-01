@@ -25,3 +25,45 @@ spring:
     console:
       enabled: true
 
+  data:
+    redis:
+      username: ${REDIS_USERNAME}
+      password: ${REDIS_PASSWORD}
+      ssl:
+        enabled: true
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT}
+      client-type: jedis
+
+
+security:
+  # Brute Force Protection
+  brute-force:
+    max-attempts: 5
+    lockout-duration: 15m
+    reset-duration: 1h
+    progressive-delay:
+      enabled: true
+      base-delay: 1s
+      max-delay: 30s
+      multiplier: 2.0
+
+logging:
+  level:
+    com.nguyenhan.authbasedproject: DEBUG
+    org.springframework.security: INFO
+#  pattern:
+#    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+#    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+#  file:
+#    name: logs/security.log
+
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when_authorized

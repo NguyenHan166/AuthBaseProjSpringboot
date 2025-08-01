@@ -1,4 +1,4 @@
-package com.nguyenhan.authbasedproject.config;
+package com.nguyenhan.authbasedproject.config.auth;
 
 import com.nguyenhan.authbasedproject.service.auth.UserDetailsServiceImpl;
 import com.nguyenhan.authbasedproject.utils.AuthEntryPointJwt;

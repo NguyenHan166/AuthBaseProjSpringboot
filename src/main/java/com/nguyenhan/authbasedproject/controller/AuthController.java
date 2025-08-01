@@ -13,6 +13,7 @@ import com.nguyenhan.authbasedproject.entity.User;
 import com.nguyenhan.authbasedproject.exception.TokenRefreshException;
 import com.nguyenhan.authbasedproject.repository.RoleRepository;
 import com.nguyenhan.authbasedproject.repository.UserRepository;
+import com.nguyenhan.authbasedproject.service.auth.LoginAttemptService;
 import com.nguyenhan.authbasedproject.service.auth.RefreshTokenService;
 import com.nguyenhan.authbasedproject.service.auth.UserDetailsImpl;
 import com.nguyenhan.authbasedproject.utils.JwtUtils;
@@ -30,6 +31,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.Duration;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -54,33 +56,65 @@ public class AuthController {
 
     @Autowired
     RefreshTokenService refreshTokenService;
+
     @Autowired
     private PasswordEncoder passwordEncoder;
+
+    @Autowired
+    LoginAttemptService loginAttemptService;
 
     private final Logger logger = LoggerFactory.getLogger(AuthController.class);
 
     @PostMapping("/login")
     public ResponseEntity<?> authenticateUser(@Valid @RequestBody LoginRequest loginRequest) {
-        Authentication authentication = authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(loginRequest.getUsername(), loginRequest.getPassword())
-        );
 
-        SecurityContextHolder.getContext().setAuthentication(authentication);
-        String jwt = jwtUtils.generateJwtToken(authentication);
-        UserDetailsImpl userDetails = (UserDetailsImpl) authentication.getPrincipal();
-        List<String> roles = userDetails.getAuthorities().stream()
-                .map(GrantedAuthority::getAuthority)
-                .toList();
+        String username = loginRequest.getUsername();
+        // check ì account is locked
+        if (loginAttemptService.isLocked(username)) {
+            logger.warn("User {} is locked due to too many failed login attempts", username);
+            return ResponseEntity.status(HttpStatus.LOCKED).body(new MessageResponse("Error: User account is locked due to too many failed login attempts. Please try again later."));
+        }
 
-        RefreshToken refreshToken = refreshTokenService.createRefreshToken(userDetails.getId());
+        // Progressive delay before trying to authenticate
 
-        return ResponseEntity.ok(new JwtResponse(jwt,
-                refreshToken.getToken(),
-                userDetails.getId(),
-                userDetails.getUsername(),
-                userDetails.getEmail(),
-                roles
-                ));
+        try{
+            Duration delay = loginAttemptService.getProgressiveDelay(username);
+            if (!delay.isZero()) {
+                Thread.sleep(delay.toMillis());
+            }
+        }catch (InterruptedException e) {}
+
+
+        try{
+            Authentication authentication = authenticationManager.authenticate(
+                    new UsernamePasswordAuthenticationToken(loginRequest.getUsername(), loginRequest.getPassword())
+            );
+
+            loginAttemptService.loginSucceeded(username);
+
+            SecurityContextHolder.getContext().setAuthentication(authentication);
+            String jwt = jwtUtils.generateJwtToken(authentication);
+            UserDetailsImpl userDetails = (UserDetailsImpl) authentication.getPrincipal();
+            List<String> roles = userDetails.getAuthorities().stream()
+                    .map(GrantedAuthority::getAuthority)
+                    .toList();
+
+            RefreshToken refreshToken = refreshTokenService.createRefreshToken(userDetails.getId());
+
+            return ResponseEntity.ok(new JwtResponse(jwt,
+                    refreshToken.getToken(),
+                    userDetails.getId(),
+                    userDetails.getUsername(),
+                    userDetails.getEmail(),
+                    roles
+            ));
+        }catch (Exception e) {
+            // 4. Register failed attempt
+            loginAttemptService.loginFailed(username);
+
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(new MessageResponse("Sai tên đăng nhập hoặc mật khẩu"));
+        }
     }
 
     @PostMapping("/signup")
@@ -143,7 +177,7 @@ public class AuthController {
             String newAccessToken = jwtUtils.generateTokenFromUser(user);
             String newRefreshToken = refreshTokenService.createRefreshToken(user.getId()).getToken();
 
-            return ResponseEntity.ok(new TokenRefreshResponse(newAccessToken, refreshToken.getToken()));
+            return ResponseEntity.ok(new TokenRefreshResponse(newAccessToken, newRefreshToken));
         }catch (TokenRefreshException e) {
             logger.warn("Token refresh failed: {}", e.getMessage());
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(new MessageResponse(e.getMessage()));
