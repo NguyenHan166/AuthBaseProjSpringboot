@@ -47,6 +47,17 @@ security:
       base-delay: 1s
       max-delay: 30s
       multiplier: 2.0
+  #rate limiting:
+  rate-limit:
+    login:
+      requests: 10
+      window: 1m
+    api:
+      requests: 100
+      window: 1m
+    global:
+      requests: 1000
+      window: 1h
 
 logging:
   level:

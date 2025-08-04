@@ -14,9 +14,11 @@ import com.nguyenhan.authbasedproject.exception.TokenRefreshException;
 import com.nguyenhan.authbasedproject.repository.RoleRepository;
 import com.nguyenhan.authbasedproject.repository.UserRepository;
 import com.nguyenhan.authbasedproject.service.auth.LoginAttemptService;
+import com.nguyenhan.authbasedproject.service.auth.RateLimitService;
 import com.nguyenhan.authbasedproject.service.auth.RefreshTokenService;
 import com.nguyenhan.authbasedproject.service.auth.UserDetailsImpl;
 import com.nguyenhan.authbasedproject.utils.JwtUtils;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -63,13 +65,20 @@ public class AuthController {
     @Autowired
     LoginAttemptService loginAttemptService;
 
+    @Autowired
+    RateLimitService rateLimitService;
+
     private final Logger logger = LoggerFactory.getLogger(AuthController.class);
 
     @PostMapping("/login")
-    public ResponseEntity<?> authenticateUser(@Valid @RequestBody LoginRequest loginRequest) {
+    public ResponseEntity<?> authenticateUser(HttpServletRequest request, @Valid @RequestBody LoginRequest loginRequest) {
+
+        if (!rateLimitService.isAllowed(request.getRemoteAddr(), "login")) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(new MessageResponse(HttpStatus.TOO_MANY_REQUESTS.getReasonPhrase()));
+        }
 
         String username = loginRequest.getUsername();
-        // check ì account is locked
+        // check if account is locked
         if (loginAttemptService.isLocked(username)) {
             logger.warn("User {} is locked due to too many failed login attempts", username);
             return ResponseEntity.status(HttpStatus.LOCKED).body(new MessageResponse("Error: User account is locked due to too many failed login attempts. Please try again later."));
